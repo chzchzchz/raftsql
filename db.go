@@ -5,6 +5,7 @@ import (
 	"errors"
 	_ "github.com/mattn/go-sqlite3"
 	"log"
+	"os"
 	"strings"
 	"sync"
 )
@@ -18,6 +19,9 @@ type raftdb struct {
 }
 
 func NewDB(path string, rp *raftPipe) *raftdb {
+	// database is entirely replayed from the raft log until snapshots
+	// are supported...
+	os.Remove(path)
 	db, err := sql.Open("sqlite3", path)
 	if err != nil {
 		log.Fatal(err)
