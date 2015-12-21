@@ -97,7 +97,7 @@ func (rdb *raftdb) readCommits() {
 
 func isSelect(query string) bool {
 	tokens := strings.Split(strings.Trim(query, " "), " ")
-	if len(tokens) == 0 || tokens[0] != "SELECT" {
+	if len(tokens) == 0 || !strings.EqualFold(tokens[0], "SELECT") {
 		return false
 	}
 	return true
