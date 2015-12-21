@@ -11,14 +11,19 @@ import (
 )
 
 type raftdb struct {
-	rp   *raftPipe
-	db   *sql.DB
-	dbmu sync.RWMutex
-	mu   sync.Mutex
-	q2cb map[string][]chan<- error
+	rp       *raftPipe
+	db       *sql.DB
+	dbmu     sync.RWMutex
+	mu       sync.Mutex
+	q2cb     map[string][]chan<- error
+	listener chan<- *string
 }
 
 func NewDB(path string, rp *raftPipe) *raftdb {
+	return NewDBListen(path, rp, nil)
+}
+
+func NewDBListen(path string, rp *raftPipe, commitC chan<- *string) *raftdb {
 	// database is entirely replayed from the raft log until snapshots
 	// are supported...
 	os.Remove(path)
@@ -26,7 +31,12 @@ func NewDB(path string, rp *raftPipe) *raftdb {
 	if err != nil {
 		log.Fatal(err)
 	}
-	rdb := &raftdb{rp: rp, db: db, q2cb: make(map[string][]chan<- error)}
+	rdb := &raftdb{
+		rp:       rp,
+		db:       db,
+		q2cb:     make(map[string][]chan<- error),
+		listener: commitC,
+	}
 	rdb.readCommits()
 	go rdb.readCommits()
 	return rdb
@@ -35,6 +45,9 @@ func NewDB(path string, rp *raftPipe) *raftdb {
 func (rdb *raftdb) readCommits() {
 	for q := range rdb.rp.CommitC {
 		if q == nil {
+			if rdb.listener != nil {
+				rdb.listener <- nil
+			}
 			return
 		}
 		query := *q
@@ -42,6 +55,10 @@ func (rdb *raftdb) readCommits() {
 		rdb.dbmu.Lock()
 		_, err := rdb.db.Exec(query)
 		rdb.dbmu.Unlock()
+
+		if rdb.listener != nil {
+			rdb.listener <- q
+		}
 
 		rdb.mu.Lock()
 		cbcs, ok := rdb.q2cb[query]
@@ -57,6 +74,8 @@ func (rdb *raftdb) readCommits() {
 			rdb.q2cb[query] = cbcs[1:]
 		}
 		rdb.mu.Unlock()
+
+		// no ordering on ACK; buffered write
 		cur_cbc <- err
 		close(cur_cbc)
 	}
@@ -135,4 +154,14 @@ func (rdb *raftdb) Query(query string) (string, error) {
 	}
 
 	return ret, nil
+}
+
+func (rdb *raftdb) Close() error {
+	rdb.mu.Lock()
+	if len(rdb.q2cb) > 0 {
+		log.Fatalf("Closing db with outstanding callbacks")
+	}
+	rdb.mu.Unlock()
+	rdb.db.Close()
+	return rdb.rp.Close()
 }

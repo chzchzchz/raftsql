@@ -10,3 +10,8 @@ func NewRaftPipe(id int, peers []string, proposeC chan string) *raftPipe {
 	cC, eC := newRaftNode(id, peers, proposeC)
 	return &raftPipe{ProposeC: proposeC, CommitC: cC, ErrorC: eC}
 }
+
+func (rp *raftPipe) Close() error {
+	close(rp.ProposeC)
+	return <-rp.ErrorC
+}
